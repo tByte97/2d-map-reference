@@ -1,0 +1,1081 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aion Varve — Trend Detective</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;1,400&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+<style>
+  :root {
+    --panel-w: 500px;
+    --bg: #05070b;
+    --surface: #0b0e14;
+    --rule: rgba(236, 235, 230, 0.09);
+    --ink: #ecebe6;
+    --ink-2: #b4b3ab;
+    --ink-3: #7c7b74;
+    --cream: #efe6d2;
+  }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); }
+  body { overflow: hidden; display: flex; flex-direction: column; font: 13px/1.5 "IBM Plex Sans", system-ui, sans-serif; }
+
+  /* ---------- Globe stage ---------- */
+  #stage { position: fixed; left: var(--panel-w); right: 0; top: 0; bottom: 0; background: #02040a 0 0 / 1024px repeat; }
+  #globe { position: absolute; inset: 0; }
+  #vignette {
+    position: absolute; inset: 0; pointer-events: none; transition: background 0.6s ease;
+    background: radial-gradient(ellipse at 50% 50%, transparent 58%, rgba(0, 0, 0, 0.5) 100%);
+  }
+  .in-flight #vignette { background: radial-gradient(ellipse at 50% 50%, transparent 35%, rgba(0, 0, 0, 0.78) 100%); }
+  .maplibregl-ctrl-attrib { background: rgba(5, 7, 11, 0.6) !important; font: 10px "IBM Plex Mono", monospace; }
+  .maplibregl-ctrl-attrib a { color: var(--ink-2) !important; }
+  .maplibregl-ctrl-attrib-button { filter: invert(1); }
+  .maplibregl-canvas-container { cursor: crosshair; }
+  .flight-title {
+    position: absolute; left: 50%; top: 44%; transform: translate(-50%, -50%) scale(0.96);
+    font: italic 400 46px/1.1 "Cormorant Garamond", Georgia, serif; color: var(--cream); text-align: center;
+    letter-spacing: 0.02em; text-shadow: 0 2px 24px rgba(0, 0, 0, 0.9); pointer-events: none;
+    opacity: 0; transition: opacity 0.45s ease, transform 1.2s ease; max-width: 80%;
+  }
+  .flight-title small { display: block; font: 10px "IBM Plex Mono", monospace; letter-spacing: 0.3em; text-transform: uppercase; color: var(--ink-2); margin-bottom: 10px; font-style: normal; }
+  .in-flight .flight-title { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  .in-flight .stage-title, .in-flight .stage-legend { opacity: 0.25; }
+  .stage-title, .stage-legend { transition: opacity 0.5s ease; }
+  .proj {
+    font: 10px "IBM Plex Mono", monospace; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2);
+    border: 1px solid var(--rule); border-radius: 999px; padding: 6px 10px; background: rgba(5, 7, 11, 0.6);
+  }
+  .proj[data-mode="flat"] { color: var(--cream); }
+  .stage-controls { position: absolute; left: 32px; top: 28px; display: flex; gap: 8px; align-items: center; }
+  .stage-title {
+    position: absolute; left: 32px; bottom: 34px; pointer-events: none; max-width: 60%;
+    text-shadow: 0 1px 12px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.9);
+  }
+  .stage-title .big { font: 500 38px/1.05 "Cormorant Garamond", Georgia, serif; margin: 6px 0 0; }
+  .stage-title .src { margin-top: 8px; color: var(--ink-2); font: 11px "IBM Plex Mono", monospace; }
+  .stage-legend {
+    position: absolute; right: 24px; top: 28px; width: 220px; padding: 10px 12px; border-radius: 8px;
+    background: rgba(5, 7, 11, 0.62); border: 1px solid var(--rule);
+    font: 10px/1.4 "IBM Plex Mono", monospace; color: var(--ink-2);
+  }
+  .stage-legend .bar { height: 8px; border-radius: 4px; margin: 8px 0 4px; }
+  .stage-legend .ends { display: flex; justify-content: space-between; color: var(--ink-2); }
+  .stage-legend .note { margin-top: 8px; color: var(--ink-3); }
+  .stage-legend .note i { display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: #0b0b0b; box-shadow: 0 0 0 1px rgba(255,255,255,0.5); margin: 0 4px 1px 0; }
+  .lead {
+    font: 500 11px "IBM Plex Mono", monospace; color: #0b0b0b; background: var(--cream); padding: 3px 8px;
+    border-radius: 999px; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.6); white-space: nowrap; pointer-events: none;
+  }
+  .lead.down { background: #1c2230; color: var(--cream); border: 1px solid var(--cream); }
+
+  /* ---------- Panel ---------- */
+  #panel {
+    position: fixed; left: 0; top: 0; bottom: 0; width: var(--panel-w); box-sizing: border-box;
+    overflow-y: auto; padding: 28px 28px 40px; z-index: 5;
+    background: linear-gradient(180deg, #090b11 0%, var(--bg) 60%); border-right: 1px solid var(--rule);
+  }
+  .mark h1 { margin: 0; font: 500 30px/1 "Cormorant Garamond", Georgia, serif; letter-spacing: 0.22em; text-transform: uppercase; }
+  .mark p { margin: 8px 0 0; color: var(--ink-2); }
+  .mark p em { font: italic 400 17px "Cormorant Garamond", Georgia, serif; color: var(--cream); }
+  section { padding: 20px 0; border-top: 1px solid var(--rule); }
+  .mark { padding-bottom: 20px; }
+  h2 { margin: 0 0 12px; font: 500 12px/1.3 "IBM Plex Sans", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+  .eyebrow { font: 10px/1.3 "IBM Plex Mono", monospace; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+  .eyebrow + * { margin-top: 6px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  select, button, input[type=text] {
+    font: 12px "IBM Plex Sans", sans-serif; color: var(--ink); background: var(--surface);
+    border: 1px solid rgba(236, 235, 230, 0.18); border-radius: 8px; padding: 7px 10px;
+  }
+  select, button { cursor: pointer; }
+  button:hover, select:hover { border-color: rgba(236, 235, 230, 0.4); }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--cream); outline-offset: 2px; }
+  button[aria-pressed="true"] { background: var(--cream); color: #0b0b0b; border-color: var(--cream); }
+  .seg { display: inline-flex; border: 1px solid rgba(236, 235, 230, 0.18); border-radius: 8px; overflow: hidden; flex-wrap: wrap; }
+  .seg button { border: 0; border-radius: 0; padding: 6px 10px; background: transparent; font-size: 11px; }
+  .seg button + button { border-left: 1px solid rgba(236, 235, 230, 0.18); }
+  .seg button[aria-pressed="true"] { background: var(--cream); color: #0b0b0b; }
+  .field { margin-top: 14px; }
+
+  .cases { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .case { text-align: left; padding: 10px 12px; line-height: 1.35; }
+  .case b { display: block; font-weight: 500; font-size: 13px; }
+  .case span { display: block; margin-top: 4px; color: var(--ink-3); font: 10px "IBM Plex Mono", monospace; letter-spacing: 0.06em; text-transform: uppercase; }
+  .case[aria-pressed="true"] span { color: #4a463e; }
+  #ask { display: flex; gap: 8px; margin-top: 12px; }
+  #ask input { flex: 1; min-width: 0; }
+  #askOut { margin-top: 8px; color: var(--ink-2); }
+  #askOut p { margin: 0 0 8px; }
+  #askOut button { display: block; width: 100%; text-align: left; margin-top: 6px; }
+
+  .desc { margin: 8px 0 0; color: var(--ink-2); }
+  .desc small { display: block; color: var(--ink-3); font: 10px "IBM Plex Mono", monospace; margin-top: 4px; }
+  .check { display: flex; gap: 8px; align-items: center; color: var(--ink-2); margin-top: 12px; cursor: pointer; }
+
+  .hero .where { color: var(--ink-3); font: 11px "IBM Plex Mono", monospace; }
+  .hero .num { font: 500 34px/1.1 "IBM Plex Mono", monospace; letter-spacing: -0.02em; margin-top: 6px; }
+  .hero .unit { color: var(--ink-2); font-size: 12px; margin-left: 6px; letter-spacing: 0; font-family: "IBM Plex Sans", sans-serif; }
+  .verdict { display: inline-block; margin-top: 10px; font: 500 11px "IBM Plex Mono", monospace; letter-spacing: 0.1em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--cream); }
+  .verdict.proven { background: var(--cream); color: #0b0b0b; }
+  .verdict.likely { color: var(--cream); }
+  .verdict.none { color: var(--ink-3); border-color: var(--ink-3); }
+  .hero p { margin: 10px 0 0; color: var(--ink-2); }
+  .hero p b { color: var(--ink); font-weight: 500; }
+  .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+  .fact { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; }
+  .fact .v { font: 500 14px "IBM Plex Mono", monospace; }
+  .fact .k { font-size: 11px; color: var(--ink-3); }
+  .warn { margin-top: 10px; font-size: 12px; color: var(--ink-3); }
+
+  #chart, #toe { display: block; width: 100%; }
+  .chart-legend { display: flex; gap: 14px; margin-top: 6px; font-size: 11px; color: var(--ink-2); flex-wrap: wrap; }
+  .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .chart-legend i { width: 14px; height: 2px; display: inline-block; border-radius: 1px; }
+  .small { color: var(--ink-3); font-size: 12px; margin: 6px 0 0; }
+
+  .callout { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); color: var(--ink-2); }
+  .callout b { color: var(--ink); font-weight: 500; }
+  .callout ol { margin: 6px 0 0; padding-left: 18px; }
+  .method p { margin: 0 0 10px; color: var(--ink-2); }
+  .method p b { color: var(--ink); font-weight: 500; }
+  .export .row button { flex: 1; }
+  footer { border-top: 1px solid var(--rule); padding-top: 16px; color: var(--ink-3); font-size: 11px; }
+  footer a { color: var(--ink-2); }
+
+  #tip {
+    position: fixed; z-index: 20; pointer-events: none; display: none; max-width: 260px;
+    background: rgba(11, 14, 20, 0.96); border: 1px solid rgba(236, 235, 230, 0.16); border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; color: var(--ink); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+  #tip .t { font-weight: 500; margin-bottom: 4px; }
+  #tip .r { display: flex; justify-content: space-between; gap: 14px; color: var(--ink-2); }
+  #tip .r b { color: var(--ink); font: 500 12px "IBM Plex Mono", monospace; }
+
+  @media (max-width: 1100px) { :root { --panel-w: 440px; } }
+  @media (max-width: 900px) {
+    body { overflow: auto; height: auto; }
+    #stage { position: relative; left: 0; height: 58vh; order: -1; flex: none; }
+    #panel { position: relative; width: auto; border-right: 0; padding: 20px 16px 32px; }
+    .stage-title { left: 16px; bottom: 16px; max-width: 90%; } .stage-title .big { font-size: 22px; } .stage-title .eyebrow { display: none; }
+    .stage-controls { left: 16px; top: 16px; }
+    .stage-legend { right: 16px; top: 16px; width: 150px; } .stage-legend .note { display: none; }
+    .proj { display: none; } .flight-title { font-size: 28px; }
+  }
+</style>
+</head>
+<body>
+<aside id="panel">
+  <header class="mark">
+    <h1>Aion Varve</h1>
+    <p><em>Trend Detective</em> — what is changing on Earth, where, how fast, and how sure we can be. NASA data, 1981–2025.</p>
+  </header>
+
+  <section>
+    <h2>Open a case</h2>
+    <div class="cases" id="cases"></div>
+    <form id="ask" autocomplete="off">
+      <input type="text" id="askInput" aria-label="Describe what you want to investigate" placeholder="Or ask: “is the soil drying out in Spain?”">
+      <button type="submit">Ask</button>
+    </form>
+    <div id="askOut" aria-live="polite"></div>
+  </section>
+
+  <section>
+    <h2>Evidence</h2>
+    <div class="eyebrow">What to measure</div>
+    <div class="seg" id="vars" role="group" aria-label="Variable"></div>
+    <p class="desc" id="varDesc"></p>
+    <div class="field">
+      <div class="eyebrow">Season</div>
+      <div class="seg" id="seasons" role="group" aria-label="Season"></div>
+    </div>
+    <div class="field">
+      <div class="eyebrow">Period</div>
+      <div class="row"><select id="from" aria-label="First year"></select><span style="color:var(--ink-3)">to</span><select id="to" aria-label="Last year"></select></div>
+    </div>
+    <label class="check"><input type="checkbox" id="fade" checked> Fade trends that could be chance (p ≥ 0.05)</label>
+  </section>
+
+  <section class="hero" id="verdict" aria-live="polite"></section>
+
+  <section>
+    <h2>The record at this spot</h2>
+    <svg id="chart" role="img" aria-label="Seasonal values by year with the trend line"></svg>
+    <div class="chart-legend" id="chartLegend"></div>
+    <div class="field">
+      <div class="eyebrow">When did the signal leave the noise?</div>
+      <svg id="toe" role="img" aria-label="For each end year, whether the trend up to that year is significant"></svg>
+      <p class="small" id="toeText"></p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Leads</h2>
+    <div class="row">
+      <button id="similar" aria-pressed="false">Find places changing like this spot</button>
+    </div>
+    <div class="callout" id="simOut" hidden></div>
+    <div class="callout" id="opposite"></div>
+  </section>
+
+  <section class="method">
+    <h2>How the detective decides</h2>
+    <p><b>Season averages.</b> Each year gets one number per spot: the average of its months in the chosen season (winter = December of the year before + January + February).</p>
+    <p><b>Rate: Sen's slope.</b> The median of the slopes between every pair of years. One freak year can't drag it, unlike a straight-line fit. The 95% range comes from the same pairs.</p>
+    <p><b>Proof: Mann–Kendall test.</b> Counts how often later years beat earlier ones. <b>p</b> is the chance of seeing a pattern at least this steady if nothing were really changing. Below 0.05 we call it a trend, below 0.01 proven.</p>
+    <p><b>Honest about memory.</b> A wet year often follows a wet year, which makes trends look surer than they are. We measure that year-to-year memory (r₁) and widen the test to match.</p>
+    <p><b>Chance on the map.</b> Test 5,000 spots and about 5% look significant by luck alone. The map caption compares the share of significant spots to that 5%.</p>
+    <p><b>Limits.</b> MERRA-2 is a reanalysis: a weather model steered by observations, ~50 km cells. Sunlight starts in 1984. Snow depth and soil moisture are modelled, not measured directly.</p>
+  </section>
+
+  <section class="export">
+    <h2>Case file</h2>
+    <div class="row">
+      <button id="csv">Series + verdict · CSV</button>
+      <button id="link">Copy link to this case</button>
+    </div>
+  </section>
+
+  <footer>
+    Data: <a href="https://power.larc.nasa.gov/" target="_blank" rel="noopener">NASA POWER</a> — MERRA-2 reanalysis (temperature, precipitation, soil moisture, snow) and CERES / GEOS (sunlight).
+    The case map covers 34–64°N, 12°W–48°E; click anywhere else on the globe and the record is fetched live.
+    Imagery: NASA Blue Marble &amp; Black Marble via GIBS. Map: MapLibre GL JS.
+  </footer>
+</aside>
+
+<div id="stage">
+  <div id="globe"></div>
+  <div id="vignette"></div>
+  <div class="stage-controls"><span class="proj" id="proj" aria-live="polite">3D globe</span></div>
+  <div class="flight-title"><small>Case</small><span id="flightTitle"></span></div>
+  <div class="stage-legend" id="legend">
+    <span id="legTitle"></span>
+    <div class="bar" id="legBar"></div>
+    <div class="ends"><span id="legLo"></span><span id="legMid"></span><span id="legHi"></span></div>
+    <div class="note" id="legNote"></div>
+  </div>
+  <div class="stage-title">
+    <div class="eyebrow" id="stageEyebrow"></div>
+    <div class="big" id="stageTitle"></div>
+    <div class="src" id="stageField"></div>
+  </div>
+</div>
+
+<div id="tip" role="tooltip"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+
+/* =========================================================================
+   Colour: OKLab interpolation so ramps are perceptually even
+   ========================================================================= */
+const toLin = c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+const fromLin = c => c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055;
+function hexToLab(h) {
+  const [r, g, b] = [1, 3, 5].map(i => toLin(parseInt(h.slice(i, i + 2), 16) / 255));
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+          1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+          0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
+}
+function labToRgb([L, a, b]) {
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+          -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+          -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s]
+    .map(c => Math.round(255 * Math.min(1, Math.max(0, fromLin(c)))));
+}
+function ramp(stops) {
+  const labs = stops.map(hexToLab);
+  return t => {
+    t = Math.min(1, Math.max(0, t)) * (labs.length - 1);
+    const i = Math.min(labs.length - 2, Math.floor(t)), f = t - i;
+    return labToRgb(labs[i].map((v, k) => v + (labs[i + 1][k] - v) * f));
+  };
+}
+const css = ([r, g, b]) => `rgb(${r},${g},${b})`;
+const gradient = (fn, n = 12) => `linear-gradient(90deg, ${Array.from({ length: n }, (_, i) => css(fn(i / (n - 1)))).join(",")})`;
+/* diverging ramps: two hues meeting at a neutral grey ("no change") */
+const WET = ramp(["#c9914f", "#7d5b31", "#3b3a37", "#2c7b73", "#63c7b8"]);
+const SIM = ramp(["#1d2a33", "#2d5d6e", "#4f9cab", "#a9dcd8", "#f2f7e8"]);   // sequential: similarity
+
+/* =========================================================================
+   What can be investigated
+   ========================================================================= */
+const VARS = {
+  T2M: {
+    name: "Air temperature", short: "air temperature", unit: "°C", k: 1, dec: 2, pct: false, community: "AG",
+    up: "warmer", down: "cooler", pal: ramp(["#72a9ee", "#36629e", "#3b3a37", "#b1483d", "#f28466"]),
+    desc: "How warm the air is 2 m above the ground, averaged over the season.",
+    src: "MERRA-2 reanalysis",
+    driver: "Opposite temperature trends are rare at this scale. Look for local causes: irrigation cools summers, losing snow cover warms springs."
+  },
+  PRECTOTCORR: {
+    name: "Precipitation", short: "precipitation", unit: "mm/month", k: 30.44, dec: 1, pct: true, minMean: 3, community: "AG",
+    up: "wetter", down: "drier", pal: WET,
+    desc: "All rain and snow that falls, in millimetres of water per month (1 mm = 1 litre on every square metre).",
+    src: "MERRA-2, corrected with rain gauges",
+    driver: "One shift can do both: when Atlantic storms change their usual track, the regions they now reach get more rain and the ones they skip get less."
+  },
+  GWETROOT: {
+    name: "Soil moisture", short: "root-zone soil moisture", unit: "%", k: 100, dec: 1, pct: false, community: "AG",
+    up: "wetter", down: "drier", pal: WET,
+    desc: "How full the top metre of soil is with water: 0% bone dry, 100% soaked. This is the water crop roots drink.",
+    src: "MERRA-2 land model",
+    driver: "The same warming dries soils where extra evaporation wins, and wets them where more rain or earlier snowmelt arrives."
+  },
+  SNODP: {
+    name: "Snow depth", short: "snow depth", unit: "cm", k: 1, dec: 1, pct: true, minMean: 2, community: "AG",
+    up: "more snow", down: "less snow", pal: ramp(["#b9824a", "#6e4f2f", "#3b3a37", "#4a7fac", "#c4e3f6"]),
+    desc: "How deep the snow lying on the ground is, averaged over the season.",
+    src: "MERRA-2 land model",
+    driver: "Warmer winters turn snow into rain in the lowlands, but can add snow up high where more moisture now falls as snow."
+  },
+  ALLSKY_SFC_SW_DWN: {
+    name: "Sunlight", short: "sunlight reaching the ground", unit: "W/m²", k: 1000 / 24, dec: 1, pct: false, community: "RE",
+    up: "sunnier", down: "dimmer", pal: ramp(["#958ce4", "#514c8e", "#3b3a37", "#a8792b", "#f3c24f"]),
+    desc: "Solar energy reaching the ground through clouds and haze, averaged over day and night.",
+    src: "CERES satellites + GEOS, from 1984",
+    driver: "Cleaner air (less aerosol pollution since the 1980s) lets more sun through; more cloud can dim the same sky."
+  }
+};
+const VAR_IDS = Object.keys(VARS);
+const SEASONS = [["ANN", "Year"], ["DJF", "Winter"], ["MAM", "Spring"], ["JJA", "Summer"], ["SON", "Autumn"]];
+const SEASON_WORD = { ANN: "year-round", DJF: "winter", MAM: "spring", JJA: "summer", SON: "autumn" };
+
+/* Prepared cases: a question, the evidence to look at, where to fly and which spot to inspect */
+const CASES = [
+  { id: "ua-summer", q: "Are Ukraine's summers getting hotter?", v: "T2M", s: "JJA", box: [22, 44.2, 40.3, 52.5], pt: [30.6, 50.4], from: 1981 },
+  { id: "ua-rain", q: "Is summer rain fading in central Ukraine?", v: "PRECTOTCORR", s: "JJA", box: [22, 44.2, 40.3, 52.5], pt: [29.38, 49], from: 1981 },
+  { id: "no-snow", q: "Is Norway losing its spring snow?", v: "SNODP", s: "MAM", box: [3, 57.5, 17, 64], pt: [6.25, 61.5], from: 1981 },
+  { id: "eu-sun", q: "Is Europe getting sunnier?", v: "ALLSKY_SFC_SW_DWN", s: "ANN", box: [-12, 34, 48, 64], pt: [10.5, 51.5], from: 1984 },
+  { id: "west-east", q: "Wetter east, drier west?", v: "PRECTOTCORR", s: "DJF", box: [-12, 34, 48, 64], pt: [-8.125, 36.5], from: 1981 },
+  { id: "es-soil", q: "Is central Spain's soil drying out?", v: "GWETROOT", s: "JJA", box: [-10, 36, 4, 44], pt: [-3.75, 39.5], from: 1981 }
+];
+
+/* plain-language question → which evidence to look at */
+const LEXICON = [
+  [/drought|dry|drie|arid|harvest|crop|farm|wheat|fire|thirst/i, ["GWETROOT", "PRECTOTCORR", "T2M"],
+    "Drought is water going out (heat, evaporation) faster than it comes in (rain). Start with soil moisture, then check rain and temperature."],
+  [/heat|hot|warm|temperatur|climate|cold|frost|cool/i, ["T2M"], "Temperature is the most direct witness."],
+  [/snow|ski|glacier|ice\b|avalanche/i, ["SNODP", "T2M"], "Snow depth shows the result; winter temperature tells you why."],
+  [/rain|flood|storm|wet|precip|shower/i, ["PRECTOTCORR", "GWETROOT"], "Precipitation is the input; soil moisture shows whether it stays."],
+  [/sun|solar|cloud|haze|smog|pollut|aerosol|bright|dim|panel/i, ["ALLSKY_SFC_SW_DWN"], "Sunlight at the surface responds to both clouds and air pollution."],
+  [/lake|river|water|well|spring/i, ["PRECTOTCORR", "GWETROOT"], "Rivers and lakes are fed by precipitation and drained through the soil."]
+];
+const SEASON_HINTS = [[/winter/i, "DJF"], [/spring/i, "MAM"], [/summer/i, "JJA"], [/autumn|fall/i, "SON"]];
+const PLACES = {
+  ukraine: [31.2, 49], kyiv: [30.52, 50.45], kiev: [30.52, 50.45], odesa: [30.73, 46.48], kherson: [32.6, 46.64],
+  kharkiv: [36.25, 50], lviv: [24.03, 49.84], alps: [10.6, 46.5], spain: [-3.75, 39.5], madrid: [-3.7, 40.4],
+  portugal: [-8, 39.6], italy: [12.5, 42.5], greece: [22, 39.3], turkey: [33, 39], poland: [19.4, 52],
+  germany: [10, 51], france: [2.5, 46.6], britain: [-1.5, 52.5], england: [-1.5, 52.5], ireland: [-8, 53.2],
+  norway: [9, 61], sweden: [15, 61], finland: [26, 63], scandinavia: [14, 61], baltic: [24, 57],
+  romania: [25, 45.8], hungary: [19.5, 47.2], moldova: [28.5, 47.2], belarus: [28, 53.5], europe: [10, 51],
+  sahara: [5, 25], amazon: [-62, -4], india: [79, 22], siberia: [100, 62], australia: [134, -25], usa: [-98, 39]
+};
+
+/* =========================================================================
+   Data: seasonal means on the case-map grid (built by tools/build_grid.py)
+   ========================================================================= */
+let G, Y0, Y1, NY;
+const DATA = {};
+async function loadGrid() {
+  G = await (await fetch("data/grid.json")).json();
+  [Y0, Y1] = G.years; NY = Y1 - Y0 + 1;
+}
+async function loadVar(v) {
+  if (!DATA[v]) DATA[v] = new Int16Array(await (await fetch(`data/${v}.bin`)).arrayBuffer());
+  return DATA[v];
+}
+const SEASON_IX = Object.fromEntries(SEASONS.map(([s], i) => [s, i]));
+/* one season's yearly means for a grid cell, in POWER units (NaN = missing) */
+function cellSeries(v, c, s) {
+  const g = G.vars[v], a = DATA[v], o = (c * 5 + SEASON_IX[s]) * NY, out = new Float64Array(NY);
+  for (let y = 0; y < NY; y++) { const q = a[o + y]; out[y] = q === -32768 ? NaN : q / g.scale; }
+  return out;
+}
+function cellAt(v, lon, lat) {
+  const g = G.vars[v];
+  const r = Math.round((lat - g.lat0) / g.dlat), c = Math.round((lon - g.lon0) / g.dlon);
+  return r < 0 || c < 0 || r >= g.nlat || c >= g.nlon ? -1 : r * g.nlon + c;
+}
+const cellLL = (v, i) => { const g = G.vars[v]; return [g.lon0 + (i % g.nlon) * g.dlon, g.lat0 + Math.floor(i / g.nlon) * g.dlat]; };
+
+/* Live fallback anywhere on Earth: NASA POWER monthly point API (CORS-enabled) */
+const liveCache = new Map();
+async function liveSeries(v, lon, lat) {
+  const key = `${v}|${lon.toFixed(2)}|${lat.toFixed(2)}`;
+  if (!liveCache.has(key)) liveCache.set(key, (async () => {
+    const url = `https://power.larc.nasa.gov/api/temporal/monthly/point?parameters=${v}&community=${VARS[v].community}` +
+      `&longitude=${lon.toFixed(3)}&latitude=${lat.toFixed(3)}&start=${Y0}&end=${Y1}&format=JSON`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`POWER ${r.status}`);
+    const m = (await r.json()).properties.parameter[v];
+    const out = {};
+    for (const [s] of SEASONS) {
+      const months = s === "ANN" ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] : { DJF: [12, 1, 2], MAM: [3, 4, 5], JJA: [6, 7, 8], SON: [9, 10, 11] }[s];
+      out[s] = Float64Array.from({ length: NY }, (_, k) => {
+        let sum = 0;
+        for (const mo of months) {
+          const y = Y0 + k - (s === "DJF" && mo === 12 ? 1 : 0);
+          const x = m[`${y}${String(mo).padStart(2, "0")}`];
+          if (x == null || x <= -999) return NaN;
+          sum += x;
+        }
+        return sum / months.length;
+      });
+    }
+    return out;
+  })());
+  return liveCache.get(key);
+}
+
+/* =========================================================================
+   Statistics: Sen's slope + Mann–Kendall with a lag-1 autocorrelation correction
+   ========================================================================= */
+function erf(x) {   // Abramowitz–Stegun 7.1.26
+  const s = Math.sign(x); x = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * x);
+  return s * (1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x));
+}
+const pTwoSided = z => 1 - erf(Math.abs(z) / Math.SQRT2);
+const SLOPES = new Float64Array(2000);
+const median = a => { const b = Float64Array.from(a).sort(), h = b.length >> 1; return b.length % 2 ? b[h] : (b[h - 1] + b[h]) / 2; };
+/* y: values for consecutive years (NaN allowed); x is the year offset */
+function trend(y, full = true) {
+  const xs = [], ys = [];
+  for (let i = 0; i < y.length; i++) if (Number.isFinite(y[i])) { xs.push(i); ys.push(y[i]); }
+  const n = xs.length;
+  if (n < 8) return null;
+  let lo = Infinity, hi = -Infinity;
+  for (const v of ys) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  if (hi - lo < 1e-9) return null;                 // nothing varies (e.g. no snow in summer)
+  let S = 0, m = 0;
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+    const d = ys[j] - ys[i];
+    S += d > 0 ? 1 : d < 0 ? -1 : 0;
+    SLOPES[m++] = d / (xs[j] - xs[i]);
+  }
+  const sl = SLOPES.subarray(0, m).sort();
+  const slope = m % 2 ? sl[m >> 1] : (sl[m / 2 - 1] + sl[m / 2]) / 2;
+  // year-to-year memory of what is left after removing the trend
+  const res = ys.map((v, i) => v - slope * xs[i]);
+  const rm = res.reduce((a, b) => a + b, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) { den += (res[i] - rm) ** 2; if (i) num += (res[i] - rm) * (res[i - 1] - rm); }
+  const r1 = den ? num / den : 0, r = Math.min(0.9, Math.max(0, r1));
+  const varS = n * (n - 1) * (2 * n + 5) / 18 * (1 + r) / (1 - r);
+  const z = S > 0 ? (S - 1) / Math.sqrt(varS) : S < 0 ? (S + 1) / Math.sqrt(varS) : 0;
+  const out = { slope, p: pTwoSided(z), n, r1, mean: ys.reduce((a, b) => a + b, 0) / n };
+  if (!full) return out;
+  const C = 1.96 * Math.sqrt(varS), clamp = i => Math.min(m - 1, Math.max(0, i));
+  out.lo = sl[clamp(Math.round((m - C) / 2) - 1)];
+  out.hi = sl[clamp(Math.round((m + C) / 2))];
+  out.icpt = median(ys.map((v, i) => v - slope * xs[i]));
+  out.x0 = xs[0]; out.x1 = xs[n - 1];
+  return out;
+}
+
+/* =========================================================================
+   State
+   ========================================================================= */
+let V = "T2M", S = "JJA", FROM = 1981, TO = 2025, fade = true, caseId = null, simMode = false;
+let pick = null;                      // { lon, lat, cell, live, series }
+let field = null;                     // per-cell trend for the current V/S/period
+
+/* =========================================================================
+   Map
+   ========================================================================= */
+const GIBS = "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best";
+const FLAT_FROM = 3.2, FLAT_AT = 4.8, ORBIT_ZOOM = 2.0;
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+function starField(seed) {
+  const SZ = 1024, c = document.createElement("canvas");
+  c.width = c.height = SZ;
+  const g = c.getContext("2d");
+  let s = seed;
+  const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 420; i++) {
+    const m = Math.pow(rnd(), 5), t = rnd();
+    const col = t < 0.12 ? "205,218,255" : t > 0.92 ? "255,226,190" : "245,245,250";
+    g.fillStyle = `rgba(${col},${0.18 + m * 0.82})`;
+    g.beginPath(); g.arc(rnd() * SZ, rnd() * SZ, 0.5 + m * 1.4, 0, Math.PI * 2); g.fill();
+  }
+  return c.toDataURL("image/png");
+}
+$("stage").style.backgroundImage = `url(${starField(11)})`;
+
+const EMPTY = { type: "FeatureCollection", features: [] };
+const BLANK = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+const map = new maplibregl.Map({
+  container: "globe",
+  style: {
+    version: 8,
+    projection: { type: ["interpolate", ["linear"], ["zoom"], FLAT_FROM, "vertical-perspective", FLAT_AT, "mercator"] },
+    sky: { "atmosphere-blend": ["interpolate", ["linear"], ["zoom"], 0, 1, FLAT_FROM, 0.7, FLAT_AT, 0] },
+    sources: {
+      day: { type: "raster", tileSize: 256, maxzoom: 8, attribution: "NASA Blue Marble &amp; Black Marble (GIBS)",
+        tiles: [`${GIBS}/BlueMarble_NextGeneration/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpeg`] },
+      night: { type: "raster", tileSize: 256, maxzoom: 8,
+        tiles: [`${GIBS}/VIIRS_Black_Marble/default/2016-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png`] },
+      trend: { type: "image", url: BLANK, coordinates: [[-12, 64], [48, 64], [48, 34], [-12, 34]] },
+      sig: { type: "geojson", data: EMPTY },
+      pick: { type: "geojson", data: EMPTY }
+    },
+    layers: [
+      { id: "day", type: "raster", source: "day", paint: { "raster-saturation": -0.3, "raster-brightness-max": 0.7 } },
+      { id: "night", type: "raster", source: "night", paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 2.4, 0.8, 3.8, 0] } },
+      { id: "trend", type: "raster", source: "trend", paint: { "raster-opacity": 0.8, "raster-resampling": "linear", "raster-fade-duration": 0 } },
+      // stippling = statistically significant, the convention of climate trend maps
+      { id: "sig", type: "circle", source: "sig", minzoom: 2.6, paint: {
+        "circle-radius": ["interpolate", ["exponential", 2], ["zoom"], 2.6, 0.6, 5, 1.3, 8, 3],
+        "circle-color": "#07080b", "circle-opacity": 0.55, "circle-pitch-alignment": "map" } },
+      { id: "pick-ring", type: "circle", source: "pick", paint: {
+        "circle-radius": 9, "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": "#efe6d2", "circle-stroke-width": 2 } },
+      { id: "pick-dot", type: "circle", source: "pick", paint: { "circle-radius": 2.5, "circle-color": "#efe6d2" } }
+    ]
+  },
+  center: [20, 30], zoom: 1.4, maxZoom: 9, maxPitch: 50,
+  attributionControl: { compact: true }
+});
+map.touchPitch.disable();
+const mapReady = new Promise(res => map.once("load", res));
+
+function updateProjBadge() {
+  const z = map.getZoom();
+  $("proj").textContent = z <= FLAT_FROM ? "3D globe" : z >= FLAT_AT ? "2D map · Web Mercator" : "globe → 2D";
+  $("proj").dataset.mode = z <= FLAT_FROM ? "globe" : z >= FLAT_AT ? "flat" : "mid";
+}
+map.on("zoom", updateProjBadge);
+
+/* ---------- flights between cases: up to orbit, turn the planet, dive in ---------- */
+let flightId = 0;
+const easeInCubic = t => t * t * t, easeOutCubic = t => 1 - (1 - t) ** 3;
+const easeInOut = t => t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+function hop(opts) {
+  return new Promise(res => {
+    const done = () => { clearTimeout(timer); map.off("moveend", done); res(); };
+    const timer = setTimeout(done, (opts.duration || 0) + 400);
+    map.on("moveend", done);
+    map.easeTo({ ...opts, essential: true });
+  });
+}
+const mx = lon => (lon + 180) / 360;
+const my = lat => (1 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) / Math.PI) / 2;
+const latOfY = y => Math.atan(Math.sinh(Math.PI * (1 - 2 * y))) * 180 / Math.PI;
+function boxCamera([w, s, e, n]) {
+  const W = map.getContainer().clientWidth, H = map.getContainer().clientHeight;
+  const pad = W < 700 ? { top: 70, bottom: 100, left: 20, right: 20 } : { top: 80, bottom: 140, left: 50, right: 260 };
+  const dx = mx(e) - mx(w), dy = my(s) - my(n);
+  const zoom = Math.min(7, Math.log2(Math.min((W - pad.left - pad.right) / (dx * 512), (H - pad.top - pad.bottom) / (dy * 512))));
+  const world = 512 * 2 ** zoom;
+  const cx = (mx(w) + mx(e)) / 2 + (pad.right - pad.left) / 2 / world;
+  const cy = (my(n) + my(s)) / 2 + (pad.bottom - pad.top) / 2 / world;
+  return { center: [cx * 360 - 180, latOfY(cy)], zoom, pitch: 0, bearing: 0 };
+}
+async function flyTo(box, title) {
+  const id = ++flightId, target = boxCamera(box);
+  if (reduceMotion) { map.jumpTo(target); return; }
+  $("flightTitle").textContent = title;
+  $("stage").classList.add("in-flight");
+  if (map.getZoom() > ORBIT_ZOOM + 0.4) await hop({ zoom: ORBIT_ZOOM, pitch: 0, bearing: 0, duration: 1100, easing: easeInCubic });
+  if (id !== flightId) return;
+  await hop({ center: target.center, zoom: ORBIT_ZOOM, duration: 1000, easing: easeInOut });
+  if (id !== flightId) return;
+  $("stage").classList.remove("in-flight");
+  await hop({ ...target, duration: 1600, easing: easeOutCubic });
+}
+
+/* =========================================================================
+   Trend field over the case map
+   ========================================================================= */
+const yi = y => y - Y0;
+function sliceYears(a) { return a.subarray(yi(FROM), yi(TO) + 1); }
+function computeField() {
+  const g = G.vars[V], nc = g.nlat * g.nlon;
+  const slope = new Float32Array(nc).fill(NaN), rate = new Float32Array(nc).fill(NaN), p = new Float32Array(nc).fill(NaN);
+  let valid = 0, sig = 0;
+  for (let c = 0; c < nc; c++) {
+    const t = trend(sliceYears(cellSeries(V, c, S)), false);
+    if (!t || (VARS[V].pct && t.mean * VARS[V].k < VARS[V].minMean)) continue;
+    slope[c] = t.slope; rate[c] = mapRate(t); p[c] = t.p; valid++;
+    if (t.p < 0.05) sig++;
+  }
+  // colour scale: symmetric, the 95th percentile of |rate| rounded to a readable step
+  const mags = Array.from(rate).filter(Number.isFinite).map(Math.abs).sort((a, b) => a - b);
+  const lim = niceLimit(mags[Math.floor(mags.length * 0.95)] || 1e-6);
+  field = { v: V, s: S, slope, rate, p, valid, sig, lim };
+}
+/* what the map shows per cell: change per decade, as % of the usual level where amounts are very uneven (rain, snow) */
+const mapRate = t => VARS[V].pct ? t.slope / t.mean * 1000 : t.slope * 10 * VARS[V].k;
+const mapUnit = () => VARS[V].pct ? "% of usual per decade" : `${VARS[V].unit} per decade`;
+function niceLimit(x) {
+  const e = 10 ** Math.floor(Math.log10(x)), f = x / e;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * e;
+}
+/* per-cell value in [−1, 1] (trend) or [0, 1] (similarity) → smooth image resampled to Web Mercator rows */
+const canvas = document.createElement("canvas");
+/* alphaOf(v): opacity from the interpolated value, so thresholds draw smooth contours instead of cell steps */
+function paintGrid(val, alpha, colour, alphaOf = null) {
+  const g = G.vars[V];
+  const west = g.lon0 - g.dlon / 2, east = g.lon0 + (g.nlon - 0.5) * g.dlon;
+  const south = g.lat0 - g.dlat / 2, north = g.lat0 + (g.nlat - 0.5) * g.dlat;
+  const W = g.nlon * 8, yN = my(north), yS = my(south);
+  const H = Math.round(W * (yS - yN) / (mx(east) - mx(west)));
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d"), img = ctx.createImageData(W, H), d = img.data;
+  for (let py = 0; py < H; py++) {
+    const fr = (latOfY(yN + (py + 0.5) / H * (yS - yN)) - g.lat0) / g.dlat;
+    const r0 = Math.floor(fr), tr = fr - r0;
+    for (let px = 0; px < W; px++) {
+      const fc = (west + (px + 0.5) / W * (east - west) - g.lon0) / g.dlon;
+      const c0 = Math.floor(fc), tc = fc - c0;
+      let sw = 0, sv = 0, sa = 0;
+      for (let k = 0; k < 4; k++) {
+        const r = r0 + (k >> 1), c = c0 + (k & 1);
+        if (r < 0 || c < 0 || r >= g.nlat || c >= g.nlon) continue;
+        const i = r * g.nlon + c, v = val[i];
+        if (!Number.isFinite(v)) continue;
+        const w = (k >> 1 ? tr : 1 - tr) * (k & 1 ? tc : 1 - tc);
+        sw += w; sv += w * v; sa += w * alpha[i];
+      }
+      const o = (py * W + px) * 4;
+      // fade out where the data ends: next to missing cells, and over the last 3 cells of the case map
+      const border = Math.min(fr + 0.5, g.nlat - 0.5 - fr, fc + 0.5, g.nlon - 0.5 - fc) / 3;
+      const edge = Math.min(1, Math.max(0, (sw - 0.2) / 0.4)) * smooth(border);
+      if (!edge) { d[o + 3] = 0; continue; }
+      const v = sv / sw, [R, Gc, B] = colour(v);
+      d[o] = R; d[o + 1] = Gc; d[o + 2] = B; d[o + 3] = Math.round(255 * edge * (alphaOf ? alphaOf(v) : sa / sw));
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  map.getSource("trend").updateImage({ url: canvas.toDataURL("image/png"), coordinates: [[west, north], [east, north], [east, south], [west, south]] });
+}
+const smooth = t => (t = Math.min(1, Math.max(0, t))) * t * (3 - 2 * t);
+function renderField() {
+  if (simMode && sim) return renderSimilarity();
+  const g = G.vars[V], nc = g.nlat * g.nlon, pal = VARS[V].pal;
+  const val = new Float32Array(nc), alpha = new Float32Array(nc);
+  const pts = [];
+  for (let c = 0; c < nc; c++) {
+    const s = field.rate[c];
+    val[c] = Number.isFinite(s) ? Math.max(-1, Math.min(1, s / field.lim)) : NaN;
+    const ok = field.p[c] < 0.05;
+    alpha[c] = !fade || ok ? 0.88 : 0.3;
+    if (ok) pts.push({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: cellLL(V, c) } });
+  }
+  paintGrid(val, alpha, t => pal((t + 1) / 2));
+  map.getSource("sig").setData({ type: "FeatureCollection", features: pts });
+  map.setLayoutProperty("sig", "visibility", "visible");
+  const vv = VARS[V];
+  $("legTitle").textContent = `${SEASONS[SEASON_IX[S]][1]} ${vv.name.toLowerCase()} trend, ${mapUnit()}`;
+  $("legBar").style.background = gradient(t => pal(t));
+  $("legLo").textContent = `−${fmtN(field.lim)}${vv.pct ? "%" : ""}`; $("legMid").textContent = "0"; $("legHi").textContent = `+${fmtN(field.lim)}${vv.pct ? "%" : ""}`;
+  $("legNote").innerHTML = `<i></i>dots = proven trend (p &lt; 0.05)${fade ? "<br>faded = could be chance" : ""}<br>${vv.down} ◂ ▸ ${vv.up}`;
+  const share = field.valid ? field.sig / field.valid * 100 : 0;
+  $("stageEyebrow").textContent = `${SEASONS[SEASON_IX[S]][1]} · ${FROM}–${TO} · ${vv.src}`;
+  $("stageTitle").textContent = `Where is ${vv.short} changing?`;
+  $("stageField").textContent = `${share.toFixed(0)}% of the map shows a significant trend · chance alone would give ~5%`;
+}
+const fmtN = x => Math.abs(x) >= 10 ? x.toFixed(0) : Math.abs(x) >= 1 ? x.toFixed(1) : Math.abs(x) >= 0.1 ? x.toFixed(2) : x.toFixed(3);
+
+/* =========================================================================
+   Lead 1: opposite trends in the current view
+   ========================================================================= */
+let leadMarkers = [];
+function findOpposites() {
+  leadMarkers.forEach(m => m.remove()); leadMarkers = [];
+  const out = $("opposite"), vv = VARS[V];
+  if (!field || simMode) { out.hidden = true; return; }
+  out.hidden = false;
+  const b = map.getBounds(), g = G.vars[V];
+  const pos = [], neg = [];
+  let inView = 0;
+  for (let c = 0; c < field.slope.length; c++) {
+    const s = field.rate[c];
+    if (!Number.isFinite(s)) continue;
+    const [lon, lat] = cellLL(V, c);
+    if (!b.contains([lon, lat])) continue;
+    inView++;
+    if (field.p[c] < 0.05) (s > 0 ? pos : neg).push({ c, lon, lat, s });
+  }
+  const need = Math.max(6, inView * 0.015);
+  if (pos.length < need || neg.length < need) {
+    out.innerHTML = `<b>Opposite trends:</b> none in this view. In ${inView ? "this area" : "view"} ${vv.short} moves ${pos.length >= need ? `mostly <b>${vv.up}</b>` : neg.length >= need ? `mostly <b>${vv.down}</b>` : "without a clear direction"}. Zoom out or try another season.`;
+    return;
+  }
+  const core = arr => {
+    arr.sort((a, b) => Math.abs(b.s) - Math.abs(a.s));
+    const top = arr.slice(0, Math.max(3, Math.ceil(arr.length / 3)));
+    const w = top.reduce((a, p) => a + Math.abs(p.s), 0);
+    return [top.reduce((a, p) => a + p.lon * Math.abs(p.s), 0) / w, top.reduce((a, p) => a + p.lat * Math.abs(p.s), 0) / w];
+  };
+  const P = core(pos), N = core(neg);
+  for (const [ll, cls, word] of [[P, "", `▲ ${vv.up}`], [N, "down", `▼ ${vv.down}`]]) {
+    const el = document.createElement("div"); el.className = `lead ${cls}`; el.textContent = word;
+    leadMarkers.push(new maplibregl.Marker({ element: el }).setLngLat(ll).addTo(map));
+  }
+  out.innerHTML = `<b>Opposite trends in view.</b> ${SEASON_WORD[S][0].toUpperCase() + SEASON_WORD[S].slice(1)} ${vv.short} is getting <b>${vv.up}</b> around ${fmtLL(P)} ` +
+    `(${pos.length} proven spots) and <b>${vv.down}</b> around ${fmtLL(N)} (${neg.length}). Same variable, opposite directions.<br><br>` +
+    `<b>Possible common driver:</b> ${vv.driver}`;
+}
+const fmtLL = ([lon, lat]) => `${Math.abs(lat).toFixed(1)}°${lat >= 0 ? "N" : "S"} ${Math.abs(lon).toFixed(1)}°${lon >= 0 ? "E" : "W"}`;
+let oppTimer;
+map.on("moveend", () => { clearTimeout(oppTimer); oppTimer = setTimeout(findOpposites, 150); });
+
+/* =========================================================================
+   Lead 2: places whose year-to-year record looks like the picked spot
+   ========================================================================= */
+let sim = null;
+function zscore(a) {
+  const f = a.filter(Number.isFinite);
+  const m = f.reduce((x, y) => x + y, 0) / f.length;
+  const sd = Math.sqrt(f.reduce((x, y) => x + (y - m) ** 2, 0) / f.length);
+  return sd > 1e-9 ? Array.from(a, v => (v - m) / sd) : null;
+}
+function computeSimilarity() {
+  const ref = zscore(Array.from(sliceYears(pick.series[S])));
+  sim = null;
+  if (!ref) return;
+  const g = G.vars[V], nc = g.nlat * g.nlon, r = new Float32Array(nc).fill(NaN);
+  for (let c = 0; c < nc; c++) {
+    const z = zscore(Array.from(sliceYears(cellSeries(V, c, S))));
+    if (!z) continue;
+    let s = 0, n = 0;
+    for (let i = 0; i < z.length; i++) if (Number.isFinite(z[i]) && Number.isFinite(ref[i])) { s += z[i] * ref[i]; n++; }
+    if (n >= 10) r[c] = s / n;
+  }
+  // best matches, at least 4° apart from the spot and from each other
+  const order = Array.from(r.keys()).filter(c => Number.isFinite(r[c])).sort((a, b) => r[b] - r[a]);
+  const top = [], far = (a, b) => Math.hypot((a[0] - b[0]) * Math.cos(a[1] * Math.PI / 180), a[1] - b[1]) > 4;
+  for (const c of order) {
+    const ll = cellLL(V, c);
+    if (far(ll, [pick.lon, pick.lat]) && top.every(t => far(ll, t.ll))) top.push({ c, ll, r: r[c] });
+    if (top.length === 5) break;
+  }
+  sim = { r, top };
+}
+function renderSimilarity() {
+  const nc = sim.r.length, val = new Float32Array(nc), alpha = new Float32Array(nc);
+  for (let c = 0; c < nc; c++) {
+    const r = sim.r[c];
+    val[c] = Number.isFinite(r) ? Math.max(0, r) : NaN;
+  }
+  // weak matches (r below ~0.3) fade out completely; strong ones glow
+  paintGrid(val, alpha, t => SIM(t), v => 0.92 * smooth((v - 0.22) / 0.33));
+  map.setLayoutProperty("sig", "visibility", "none");
+  $("legTitle").textContent = "How closely each place's year-to-year record matches your spot";
+  $("legBar").style.background = gradient(SIM);
+  $("legLo").textContent = "0"; $("legMid").textContent = "r = 0.5"; $("legHi").textContent = "1";
+  $("legNote").textContent = "Correlation of the seasonal values, same period. Hidden below r ≈ 0.3.";
+  $("stageTitle").textContent = "Places with the same story";
+  $("stageField").textContent = "Top 5 matches are marked · click a place to make it the new spot";
+  leadMarkers.forEach(m => m.remove()); leadMarkers = [];
+  sim.top.forEach((t, i) => {
+    const el = document.createElement("div"); el.className = "lead"; el.textContent = `#${i + 1} · r ${t.r.toFixed(2)}`;
+    leadMarkers.push(new maplibregl.Marker({ element: el }).setLngLat(t.ll).addTo(map));
+  });
+  const vv = VARS[V];
+  $("simOut").hidden = false;
+  $("simOut").innerHTML = `<b>Same story as your spot</b> (${SEASON_WORD[S]} ${vv.short}, ${FROM}–${TO}):<ol>` +
+    sim.top.map(t => `<li>${fmtLL(t.ll)} · r = ${t.r.toFixed(2)}</li>`).join("") + `</ol>` +
+    `<div class="small">High r means good and bad years arrive together, a hint of one shared cause: the same weather patterns, the same drought.</div>`;
+}
+$("similar").addEventListener("click", () => {
+  if (!pick) return;
+  simMode = !simMode;
+  $("similar").setAttribute("aria-pressed", simMode);
+  if (simMode) { if (!sim) computeSimilarity(); }
+  else $("simOut").hidden = true;
+  renderField(); if (!simMode) findOpposites(); else $("opposite").hidden = true;
+});
+
+/* =========================================================================
+   The spot under investigation: verdict, chart, time of emergence
+   ========================================================================= */
+async function inspect(lon, lat) {
+  const c = cellAt(V, lon, lat);
+  map.getSource("pick").setData({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [lon, lat] } });
+  if (c >= 0) {
+    const [clon, clat] = cellLL(V, c);
+    pick = { lon, lat, cell: c, clon, clat, live: false, series: Object.fromEntries(SEASONS.map(([s]) => [s, cellSeries(V, c, s)])) };
+  } else {
+    pick = { lon, lat, cell: -1, live: true, loading: true, series: null };
+    renderVerdict();
+    try {
+      const series = await liveSeries(V, lon, lat);
+      if (pick.lon !== lon || pick.lat !== lat) return;
+      pick.series = series; pick.loading = false;
+    } catch (e) {
+      pick.loading = false; pick.error = String(e.message || e);
+    }
+  }
+  sim = null;
+  if (simMode) computeSimilarity();
+  renderField(); renderVerdict(); saveHash();
+}
+async function reloadPickForVar() {
+  if (pick) await inspect(pick.lon, pick.lat);
+}
+
+function verdictOf(t) {
+  if (!t) return null;
+  return t.p < 0.01 ? ["proven", "Proven trend"] : t.p < 0.05 ? ["likely", "Likely trend"] : ["none", "Not proven"];
+}
+const fmtP = p => p < 0.001 ? "less than 1 in 1,000" : `about 1 in ${Math.max(2, Math.round(1 / p)).toLocaleString("en-US")}`;
+const signed = (x, d) => `${x > 0 ? "+" : x < 0 ? "−" : "±"}${Math.abs(x).toFixed(d)}`;
+
+function renderVerdict() {
+  const el = $("verdict"), vv = VARS[V], k = vv.k;
+  if (!pick) { el.innerHTML = `<div class="eyebrow">Spot under investigation</div><p>Click anywhere on the map or the globe.</p>`; renderChart(null); return; }
+  const where = pick.live ? `${fmtLL([pick.lon, pick.lat])} · live from NASA POWER` : `${fmtLL([pick.clon, pick.clat])} · ~50 km cell`;
+  if (pick.loading) { el.innerHTML = `<div class="where">${where}</div><p>Fetching 45 years of monthly data…</p>`; renderChart(null); return; }
+  if (pick.error) { el.innerHTML = `<div class="where">${where}</div><p>Could not reach NASA POWER (${pick.error}). Try a spot inside the case map.</p>`; renderChart(null); return; }
+  const y = sliceYears(pick.series[S]);
+  const t = trend(y);
+  if (!t) {
+    el.innerHTML = `<div class="where">${where}</div><p>No ${SEASON_WORD[S]} ${vv.short} record to judge here${V === "SNODP" ? " (no snow lies in this season)" : ""}.</p>`;
+    renderChart(null); return;
+  }
+  const [cls, label] = verdictOf(t);
+  const dec = t.slope * 10 * k, years = TO - FROM;
+  const total = t.slope * years * k, start = (t.icpt + t.slope * t.x0) * k, end = (t.icpt + t.slope * t.x1) * k;
+  const rel = vv.pct && Math.abs(t.mean) > 1e-6 ? ` (${signed(dec / (t.mean * k) * 100, 1)}% of the usual level per decade)` : "";
+  const toe = emergence(y, t);
+  const dir = t.slope > 0 ? vv.up : vv.down;
+  el.innerHTML = `
+    <div class="where">${where}</div>
+    <div class="num">${signed(dec, vv.dec)}<span class="unit">${vv.unit} per decade</span></div>
+    <span class="verdict ${cls}">${label}</span>
+    <p>From ${FROM} to ${TO}, ${SEASON_WORD[S]} ${vv.short} here went from about <b>${start.toFixed(vv.dec)}</b> to <b>${end.toFixed(vv.dec)} ${vv.unit}</b>:
+      ${signed(total, vv.dec)} ${vv.unit} in total${rel}${t.p < 0.05 ? `, so <b>${dir}</b>` : ""}.
+      ${t.p < 0.05
+        ? `If nothing were really changing, a pattern this steady would turn up by chance ${fmtP(t.p)} times.`
+        : `A pattern like this turns up by chance ${fmtP(t.p)} times, so the evidence does not show a real trend: these may be natural ups and downs. Case not proven.`}</p>
+    <div class="facts">
+      <div class="fact"><div class="v">${t.p < 0.001 ? "<0.001" : t.p.toFixed(3)}</div><div class="k">p-value</div></div>
+      <div class="fact"><div class="v">${signed(t.lo * 10 * k, vv.dec)}…${signed(t.hi * 10 * k, vv.dec)}</div><div class="k">95% range, per decade</div></div>
+      <div class="fact"><div class="v">${toe.year ?? "—"}</div><div class="k">signal emerged</div></div>
+    </div>
+    ${t.r1 > 0.2 ? `<div class="warn">Years here have memory (r₁ = ${t.r1.toFixed(2)}): a wet year tends to follow a wet one, so the test counted fewer independent years.</div>` : ""}
+    ${t.lo * t.hi < 0 && t.p < 0.05 ? `<div class="warn">The 95% range still touches zero: the direction is likely, the size is uncertain.</div>` : ""}`;
+  renderChart(y, t, toe);
+}
+
+/* first end year after which the trend stays significant with the same sign */
+function emergence(y, full) {
+  const steps = [];
+  for (let e = 9; e < y.length; e++) {
+    const t = trend(y.subarray(0, e + 1), false);
+    steps.push({ year: FROM + e, ok: !!t && t.p < 0.05 && Math.sign(t.slope) === Math.sign(full.slope), p: t ? t.p : 1 });
+  }
+  let year = null;
+  for (let i = steps.length - 1; i >= 0 && steps[i].ok; i--) year = steps[i].year;
+  return { year, steps };
+}
+
+function renderChart(y, t, toe) {
+  const svg = $("chart"), W = svg.clientWidth || 444, H = 210, P = { l: 44, r: 10, t: 12, b: 24 };
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.style.height = `${H}px`;
+  const toeSvg = $("toe");
+  if (!y || !t) {
+    svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" fill="#7c7b74" font-size="12" text-anchor="middle">No record to plot</text>`;
+    toeSvg.innerHTML = ""; $("toeText").textContent = ""; $("chartLegend").innerHTML = ""; return;
+  }
+  const vv = VARS[V], k = vv.k, n = y.length;
+  const vals = Array.from(y, v => v * k).filter(Number.isFinite);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const padY = (hi - lo) * 0.12 || 1; lo -= padY; hi += padY;
+  const X = i => P.l + i / (n - 1) * (W - P.l - P.r), Yv = v => P.t + (1 - (v - lo) / (hi - lo)) * (H - P.t - P.b);
+  const col = css(vv.pal(t.slope > 0 ? 0.92 : 0.08));
+  let s = "";
+  // grid + axes
+  const step = niceLimit((hi - lo) / 4);
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step)
+    s += `<line x1="${P.l}" x2="${W - P.r}" y1="${Yv(v)}" y2="${Yv(v)}" stroke="rgba(236,235,230,0.07)"/><text x="${P.l - 6}" y="${Yv(v) + 3}" fill="#7c7b74" font-size="10" text-anchor="end" font-family="IBM Plex Mono">${fmtN(v)}</text>`;
+  for (let yr = Math.ceil(FROM / 10) * 10; yr <= TO; yr += 10)
+    s += `<text x="${X(yr - FROM)}" y="${H - 6}" fill="#7c7b74" font-size="10" text-anchor="middle" font-family="IBM Plex Mono">${yr}</text>`;
+  // 95% range of the rate: a wedge pivoting on the centre of the record
+  const xm = (t.x0 + t.x1) / 2, ym = (t.icpt + t.slope * xm) * k;
+  const at = (sl, x) => ym + sl * k * (x - xm);
+  s += `<polygon points="${X(t.x0)},${Yv(at(t.lo, t.x0))} ${X(t.x1)},${Yv(at(t.hi, t.x1))} ${X(t.x1)},${Yv(at(t.lo, t.x1))} ${X(t.x0)},${Yv(at(t.hi, t.x0))}" fill="${col}" opacity="0.13"/>`;
+  // emergence marker
+  if (toe.year) s += `<line x1="${X(toe.year - FROM)}" x2="${X(toe.year - FROM)}" y1="${P.t}" y2="${H - P.b}" stroke="#efe6d2" stroke-dasharray="3 3" opacity="0.5"/><text x="${X(toe.year - FROM) + 4}" y="${P.t + 9}" fill="#b4b3ab" font-size="10" font-family="IBM Plex Mono">emerged ${toe.year}</text>`;
+  // record: thin line + dots, trend line on top
+  let path = "", on = false;
+  for (let i = 0; i < n; i++) {
+    if (!Number.isFinite(y[i])) { on = false; continue; }
+    path += `${on ? "L" : "M"}${X(i).toFixed(1)},${Yv(y[i] * k).toFixed(1)}`; on = true;
+  }
+  s += `<path d="${path}" fill="none" stroke="#7c7b74" stroke-width="1.2"/>`;
+  for (let i = 0; i < n; i++) if (Number.isFinite(y[i])) s += `<circle cx="${X(i)}" cy="${Yv(y[i] * k)}" r="2.6" fill="#b4b3ab" stroke="#05070b" stroke-width="1"/>`;
+  s += `<line x1="${X(t.x0)}" y1="${Yv((t.icpt + t.slope * t.x0) * k)}" x2="${X(t.x1)}" y2="${Yv((t.icpt + t.slope * t.x1) * k)}" stroke="${col}" stroke-width="2.4" stroke-linecap="round"/>`;
+  s += `<line id="cross" y1="${P.t}" y2="${H - P.b}" stroke="#efe6d2" opacity="0" />`;
+  svg.innerHTML = s;
+  $("chartLegend").innerHTML = `<span><i style="background:#b4b3ab"></i>${SEASONS[SEASON_IX[S]][1]} average, ${vv.unit}</span>` +
+    `<span><i style="background:${col};height:3px"></i>Sen's trend</span><span><i style="background:${col};opacity:.35;height:8px"></i>95% range</span>`;
+  svg.onmousemove = e => {
+    const r = svg.getBoundingClientRect(), i = Math.round((e.clientX - r.left - P.l) / (W - P.l - P.r) * (n - 1));
+    if (i < 0 || i >= n || !Number.isFinite(y[i])) return hideTip();
+    const cr = $("cross"); cr.setAttribute("x1", X(i)); cr.setAttribute("x2", X(i)); cr.setAttribute("opacity", 0.4);
+    const v = y[i] * k, tl = (t.icpt + t.slope * i) * k;
+    showTip(`<div class="t">${SEASONS[SEASON_IX[S]][1]} ${FROM + i}</div><div class="r">Value <b>${v.toFixed(vv.dec)} ${vv.unit}</b></div><div class="r">vs trend line <b>${signed(v - tl, vv.dec)}</b></div>`, e.clientX, e.clientY);
+  };
+  svg.onmouseleave = () => { hideTip(); $("cross")?.setAttribute("opacity", 0); };
+
+  // evidence timeline: is the trend significant if the record ended in year X?
+  const TW = toeSvg.clientWidth || 444, TH = 26, st = toe.steps, cw = (TW - 2) / st.length;
+  toeSvg.setAttribute("viewBox", `0 0 ${TW} ${TH}`); toeSvg.style.height = `${TH}px`;
+  toeSvg.innerHTML = st.map((d, i) => `<rect x="${1 + i * cw}" y="2" width="${Math.max(1, cw - 2)}" height="12" rx="2" fill="${d.ok ? col : "#1b1e26"}"><title>Record ending ${d.year}: p = ${d.p.toFixed(3)}</title></rect>`).join("") +
+    `<text x="1" y="25" fill="#7c7b74" font-size="9" font-family="IBM Plex Mono">${st[0]?.year ?? ""}</text><text x="${TW - 1}" y="25" fill="#7c7b74" font-size="9" text-anchor="end" font-family="IBM Plex Mono">${TO}</text>`;
+  $("toeText").textContent = toe.year
+    ? `Each block is the same test run on the record up to that year. From ${toe.year} on the ${t.slope > 0 ? "rise" : "fall"} stays significant: that's when the signal left the noise.`
+    : "Each block is the same test run on the record up to that year. The signal has not yet clearly left the noise.";
+}
+
+/* =========================================================================
+   Panel controls
+   ========================================================================= */
+function buildControls() {
+  $("cases").innerHTML = CASES.map(c => `<button class="case" data-id="${c.id}" aria-pressed="false"><b>${c.q}</b><span>${VARS[c.v].name} · ${SEASONS[SEASON_IX[c.s]][1]}</span></button>`).join("");
+  $("cases").addEventListener("click", e => { const b = e.target.closest(".case"); if (b) openCase(CASES.find(c => c.id === b.dataset.id)); });
+  $("vars").innerHTML = VAR_IDS.map(v => `<button data-v="${v}">${VARS[v].name}</button>`).join("");
+  $("vars").addEventListener("click", e => { const b = e.target.closest("button"); if (b) setEvidence({ v: b.dataset.v }); });
+  $("seasons").innerHTML = SEASONS.map(([s, n]) => `<button data-v="${s}">${n}</button>`).join("");
+  $("seasons").addEventListener("click", e => { const b = e.target.closest("button"); if (b) setEvidence({ s: b.dataset.v }); });
+  for (const id of ["from", "to"]) {
+    $(id).innerHTML = Array.from({ length: NY }, (_, i) => `<option>${Y0 + i}</option>`).join("");
+    $(id).addEventListener("change", () => setEvidence({ from: +$("from").value, to: +$("to").value }));
+  }
+  $("fade").addEventListener("change", () => { fade = $("fade").checked; renderField(); });
+}
+function syncControls() {
+  for (const b of $("vars").children) b.setAttribute("aria-pressed", b.dataset.v === V);
+  for (const b of $("seasons").children) b.setAttribute("aria-pressed", b.dataset.v === S);
+  for (const b of $("cases").children) b.setAttribute("aria-pressed", b.dataset.id === caseId);
+  $("from").value = FROM; $("to").value = TO;
+  const vv = VARS[V];
+  $("varDesc").innerHTML = `${vv.desc}<small>${vv.src} · shown in ${vv.unit}</small>`;
+}
+async function setEvidence({ v = V, s = S, from = FROM, to = TO }, keepCase = false) {
+  const firstYear = v === "ALLSKY_SFC_SW_DWN" ? Math.max(1984, from) : from;
+  if (to - firstYear < 9) to = Math.min(Y1, firstYear + 9);
+  const varChanged = v !== V;
+  [V, S, FROM, TO] = [v, s, firstYear, to];
+  if (!keepCase) caseId = null;
+  await loadVar(V);
+  syncControls();
+  computeField();
+  sim = null;
+  if (varChanged && pick) await reloadPickForVar();
+  else { if (simMode && pick?.series) computeSimilarity(); renderField(); renderVerdict(); }
+  findOpposites(); saveHash();
+}
+async function openCase(c, fly = true) {
+  caseId = c.id;
+  if (simMode) { simMode = false; $("similar").setAttribute("aria-pressed", false); $("simOut").hidden = true; }
+  const flight = fly ? flyTo(c.box, c.q) : Promise.resolve();
+  await setEvidence({ v: c.v, s: c.s, from: c.from, to: Y1 }, true);
+  await inspect(c.pt[0], c.pt[1]);
+  await flight;
+  findOpposites();
+}
+
+/* ---------- plain-language question → evidence suggestions ---------- */
+$("ask").addEventListener("submit", e => {
+  e.preventDefault();
+  const q = $("askInput").value.trim();
+  if (!q) return;
+  const hit = LEXICON.find(([re]) => re.test(q));
+  const season = (SEASON_HINTS.find(([re]) => re.test(q)) || [])[1];
+  const place = Object.keys(PLACES).find(p => new RegExp(`\\b${p}`, "i").test(q));
+  const vars = hit ? hit[1] : ["T2M", "PRECTOTCORR", "GWETROOT"];
+  const s = season || (vars[0] === "SNODP" ? "MAM" : vars[0] === "ALLSKY_SFC_SW_DWN" ? "ANN" : "JJA");
+  const pt = place ? PLACES[place] : pick ? [pick.lon, pick.lat] : [30.6, 50.4];
+  $("askOut").innerHTML = `<p>${hit ? hit[2] : "I'm not sure which measurement fits, so here are the three most common witnesses."}` +
+    `${place ? ` Looking at <b>${place[0].toUpperCase() + place.slice(1)}</b>.` : ""}</p>` +
+    vars.map((v, i) => `<button data-i="${i}">${i ? "Then" : "Start with"}: ${VARS[v].name}, ${SEASONS[SEASON_IX[s]][1].toLowerCase()} →</button>`).join("");
+  $("askOut").querySelectorAll("button").forEach(b => b.addEventListener("click", async () => {
+    const v = vars[+b.dataset.i];
+    flyTo([pt[0] - 7, pt[1] - 4, pt[0] + 7, pt[1] + 4], place ? place[0].toUpperCase() + place.slice(1) : VARS[v].name);
+    await setEvidence({ v, s, from: Y0, to: Y1 });
+    await inspect(pt[0], pt[1]);
+  }));
+});
+
+/* ---------- hover + click on the map ---------- */
+function showTip(html, x, y) {
+  const t = $("tip"); t.innerHTML = html; t.style.display = "block";
+  const r = t.getBoundingClientRect();
+  t.style.left = `${Math.min(innerWidth - r.width - 8, x + 14)}px`; t.style.top = `${Math.min(innerHeight - r.height - 8, y + 14)}px`;
+}
+const hideTip = () => { $("tip").style.display = "none"; };
+map.on("mousemove", e => {
+  if (!field) return;
+  const c = cellAt(V, e.lngLat.lng, e.lngLat.lat);
+  if (c < 0 || !Number.isFinite(field.slope[c])) return hideTip();
+  const vv = VARS[V];
+  if (simMode && sim) {
+    const r = sim.r[c];
+    return showTip(`<div class="t">${fmtLL(cellLL(V, c))}</div><div class="r">Match with your spot <b>r = ${Number.isFinite(r) ? r.toFixed(2) : "—"}</b></div>`, e.originalEvent.clientX, e.originalEvent.clientY);
+  }
+  const p = field.p[c], v = verdictOf({ p })[1];
+  showTip(`<div class="t">${fmtLL(cellLL(V, c))}</div><div class="r">Trend <b>${signed(field.slope[c] * 10 * vv.k, vv.dec)} ${vv.unit}/decade</b></div>` +
+    (vv.pct ? `<div class="r">of the usual level <b>${signed(field.rate[c], 1)}%/decade</b></div>` : "") +
+    `<div class="r">p <b>${p < 0.001 ? "<0.001" : p.toFixed(3)}</b></div><div class="r" style="font-size:11px">${v} · click to investigate</div>`, e.originalEvent.clientX, e.originalEvent.clientY);
+});
+map.getCanvas().addEventListener("mouseleave", hideTip);
+map.on("movestart", hideTip);
+map.on("click", e => { caseId = null; syncControls(); inspect(e.lngLat.lng, e.lngLat.lat); });
+
+/* ---------- export + shareable state ---------- */
+function download(name, rows) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([rows.map(r => r.join(",")).join("\n")], { type: "text/csv" }));
+  a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+$("csv").addEventListener("click", () => {
+  if (!pick?.series) return;
+  const vv = VARS[V], y = sliceYears(pick.series[S]), t = trend(y);
+  const rows = [
+    ["# variable", vv.name], ["# source", vv.src], ["# season", SEASONS[SEASON_IX[S]][1]], ["# location", pick.live ? `${pick.lat} ${pick.lon}` : `${pick.clat} ${pick.clon}`],
+    ["# sen_slope_per_decade", t ? (t.slope * 10 * vv.k).toFixed(4) : ""], ["# ci95_per_decade", t ? `${(t.lo * 10 * vv.k).toFixed(4)} ${(t.hi * 10 * vv.k).toFixed(4)}` : ""],
+    ["# mann_kendall_p", t ? t.p.toExponential(3) : ""], ["# lag1_autocorrelation", t ? t.r1.toFixed(3) : ""],
+    ["year", `value_${vv.unit.replace(/\W/g, "")}`, "trend_line"]
+  ];
+  y.forEach((v, i) => rows.push([FROM + i, Number.isFinite(v) ? (v * vv.k).toFixed(3) : "", t ? ((t.icpt + t.slope * i) * vv.k).toFixed(3) : ""]));
+  download(`trend_${V}_${S}_${FROM}-${TO}.csv`, rows);
+});
+function saveHash() {
+  const p = new URLSearchParams({ v: V, s: S, p: `${FROM}-${TO}` });
+  if (caseId) p.set("case", caseId);
+  if (pick) p.set("pt", `${pick.lon.toFixed(3)},${pick.lat.toFixed(3)}`);
+  history.replaceState(null, "", `#${p}`);
+}
+$("link").addEventListener("click", () => { navigator.clipboard?.writeText(location.href); $("link").textContent = "Link copied"; setTimeout(() => ($("link").textContent = "Copy link to this case"), 1500); });
+
+/* ---------- boot ---------- */
+addEventListener("resize", () => renderVerdict());
+Promise.all([loadGrid(), mapReady]).then(async () => {
+  buildControls();
+  const h = new URLSearchParams(location.hash.slice(1));
+  const c = CASES.find(c => c.id === h.get("case"));
+  if (c || !h.get("v")) return openCase(c || CASES[0]);
+  const [f, t] = (h.get("p") || "").split("-").map(Number);
+  await setEvidence({ v: VARS[h.get("v")] ? h.get("v") : "T2M", s: SEASON_IX[h.get("s")] != null ? h.get("s") : "JJA", from: f || Y0, to: t || Y1 });
+  const pt = (h.get("pt") || "").split(",").map(Number);
+  if (pt.length === 2 && pt.every(Number.isFinite)) await inspect(pt[0], pt[1]);
+  map.easeTo({ ...boxCamera([-12, 34, 48, 64]), duration: 2200 });
+});
+</script>
+</body>
+</html>

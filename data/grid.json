@@ -1,0 +1,65 @@
+{
+ "years": [
+  1981,
+  2025
+ ],
+ "seasons": [
+  "ANN",
+  "DJF",
+  "MAM",
+  "JJA",
+  "SON"
+ ],
+ "vars": {
+  "T2M": {
+   "lat0": 34.0,
+   "dlat": 0.5,
+   "nlat": 61,
+   "lon0": -11.875,
+   "dlon": 0.625,
+   "nlon": 96,
+   "scale": 100,
+   "units": "C"
+  },
+  "PRECTOTCORR": {
+   "lat0": 34.0,
+   "dlat": 0.5,
+   "nlat": 61,
+   "lon0": -11.875,
+   "dlon": 0.625,
+   "nlon": 96,
+   "scale": 100,
+   "units": "mm/day"
+  },
+  "GWETROOT": {
+   "lat0": 34.0,
+   "dlat": 0.5,
+   "nlat": 61,
+   "lon0": -11.875,
+   "dlon": 0.625,
+   "nlon": 96,
+   "scale": 10000,
+   "units": "1"
+  },
+  "SNODP": {
+   "lat0": 34.0,
+   "dlat": 0.5,
+   "nlat": 61,
+   "lon0": -11.875,
+   "dlon": 0.625,
+   "nlon": 96,
+   "scale": 10,
+   "units": "cm"
+  },
+  "ALLSKY_SFC_SW_DWN": {
+   "lat0": 34.5,
+   "dlat": 1.0,
+   "nlat": 30,
+   "lon0": -11.5,
+   "dlon": 1.0,
+   "nlon": 60,
+   "scale": 100,
+   "units": "kW-hr/m^2/day"
+  }
+ }
+}
